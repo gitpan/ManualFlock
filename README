@@ -1,0 +1,176 @@
+File/ManualFlock version 0.01
+=============================
+
+The README is used to introduce the module and provide instructions on
+how to install the module, any machine dependencies it may have (for
+example C compilers and installed libraries) and any other information
+that should be provided before the module is installed.
+
+A README file is required for CPAN modules since CPAN extracts the
+README file from a module distribution so that people browsing the
+archive can use it get an idea of the modules uses. It is usually a
+good idea to provide version information here so that people can
+decide whether fixes for the module are worth downloading.
+
+INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+DEPENDENCIES
+
+This module requires these other modules and libraries:
+
+   File::stat
+   File::Basename
+   DirHandle
+   FileHandle
+   File::ManualFlock::Constants
+
+COPYRIGHT AND LICENCE
+
+Put the correct copyright and licence information here.
+
+Copyright (C) 2002 A. U. Thor
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself. 
+
+=item 
+
+=head1 NAME
+
+File::ManualFlock - manual file locking for systems without flock (Win95/98/??);
+               uses sysopen exclusively to establish and maintain locks
+
+=head1 SYNOPSIS
+    
+    use File::ManualFlock;
+    
+    my $mfl = new File::ManualFlock;
+    
+    my $lh = $mfl->mflock( $filepath, $flags, $max_wait, $expire );
+    
+    my $lh = $mfl->free_lock;
+    
+    my $lh2 = $mfl->mflock( $filepath2, $flags2, $max_wait2, $expire2 );
+    
+    Note: You must assign the returned lock handle to a variable in the scope from which you
+          make the call (e.g. $lh).  If you do not do so, the returned lock handle will
+          immediately go out of scope and therewith release the lock on the file. You
+          can also manually release a lock by calling the $lh->free_lock method on the 
+          lock handle. Otherwise, all locks are released upon the lock handle going
+          out of scope, or upon program termination, whichever occurs first.
+          
+          The $expire parameter, if utilized, must be given a value == -1 or >= 1.
+          A 0 value will be treated as undef.  $expire specifies the permissable maximum
+          age in seconds for a lock file.  Lock files older than $expire are forced released.
+          To specify that locks should never be expired (i.e., they can exist for an infinite
+          period), set $expire to -1 or MFL_INFINITE. If $expire is not specified, a lock
+          will be forced released if it is older than 3600 seconds by default. Support for
+          the $expire parameter means that "old" locks can be clobbered.  You cannot presently 
+          enforce the expire time as a lock setter, but you can clobber old locks as a lock
+          getter.
+                    
+          $flags can be:
+          
+          LOCK_SH
+          LOCK_EX
+          LOCK_UN
+          LOCK_SH|LOCK_NB
+          LOCK_EX|LOCK_NB
+          LOCK_UN|LOCK_NB
+          
+          By default, LOCK_SH, LOCK_EX, and LOCK_UN block infinitely unless the parameter
+          $max_wait >= 1 or $max_wait == undef or 0.  Set $max_wait == -1 or MFL_INFINITE 
+          to block forever or until lock can be set.
+          
+          Where both the LOCK_NB flag is specified and $max_wait != 0, LOCK_NB trumps 
+          $max_wait and $max_wait is set to undef.  
+
+=head1 DESCRIPTION
+
+This module provides an advisory file locking mechanism to allow
+reliable file locking protections on systems without the standard
+flock function.  This solution only relies upon sysopen  to achieve 
+file locking, and is therefore more portable, although probably less
+efficient, than the standard flock function.  The File::ManualFlock::mflock()
+method supports exclusive, shared, blocking, and non-blocking file
+locking.
+
+The File::ManualFlock::Tools module provides "safe" file management tools that
+employ and detect the mflock file locking mechanism.  They are basically
+the standard tools wrapped with mflock file locking protections.
+
+Mflock, like flock, is an advisory locking mechanism.  Mflock can be
+used as a substitute for flock, but it will not detect files locked
+with flock.  Likewise, flock will not detect files locked with mflock.  
+Thus, while File::ManualFlock::FlockOverride offers a 'flock'
+function that when used will override the standard flock and provide
+the same interface, the two locking methods cannot be used
+interchangeably. You must choose one or the other and go with it.
+
+=head1 NOTES
+
+Where both the LOCK_NB flag and $max_wait parameter are provided, LOCK_NB will
+trump $max_wait and $max_wait will be set to undef.  Where $expire is not set,
+locks will be considered expired if they are over 3600 seconds (1 hour) old, as
+determined by the files mtime, given by the built-in stat function, and the 
+number of seconds since the last epoch.  This should be ok with mod_perl, although
+its not tested and other issues may be present. 
+
+Note: you cannot enforce an expire date on your locks that others must respect.
+If another programmer wants all locks for a file over 5 minutes old to be cleared,
+they will be able to do that by setting $expire to 300.  In other words, support for
+the $expire parameter means that "old" locks can be clobbered.  You cannot presently 
+enforce the expire time as a lock setter, but you can clobber old locks as a lock
+getter.
+
+For the curious, here's how it works internally.  Exclusive locks are 
+regulated by sysopen. See sysopen docs for details.
+
+- readable excl(usive) locks are permitted when:
+    1) no readable or writeable excl locks exist for the target file
+    
+- shared locks are permitted on a file when:
+    1) a readable excl lock is available for the file
+
+- writable excl locks are permitted on a file when:
+    1) an excl lock is available for the file, and
+    2) no shared locks remain on the file
+
+- to get a shared lock on a file:
+    1) get a readable excl lock on the file, and
+    2) get a new shared lock on the file, and
+    3) release the readable excl lock
+
+- to get a writable excl lock:
+    1) get a writable excl lock on a file
+    2) check for any shared locks
+    3) if blocking is permitted, wait until all shared locks are released
+    4) hold the writable excl lock and proceed
+
+Since there must be a way to clean up zombie locks following crashes, 
+power failures, etc., locks are assumed to be zombies after a certain period.
+By default, this period is one hour, or 3600 seconds from the files mtime,
+as given by stat.  Using the mtime rather than the ctime allows renewing of
+locks, although this feature is not yet implemented.
+
+=head1 TODO
+  
+- force lock - useful for when you want to extend the life of a lock you own;
+    otherwise, not safe to force lock; nearly the same result can presently be achieved
+    by as setting $expire to 1 and $max_wait to 3 or so.
+
+=head1 LICENSE
+
+Same as Perl.
+
+=head1 AUTHOR
+
+Bill Catlan, E<lt>wcatlan@cpan.orgE<gt>
+=cut
